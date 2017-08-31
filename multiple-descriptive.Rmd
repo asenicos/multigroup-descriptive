@@ -1,0 +1,698 @@
+---
+title: "Descriptive statistic for multiple groups"
+author: "Automatic report by R-script /asenic"
+output: word_document
+---
+
+```{r, echo=FALSE, include=FALSE, cache = FALSE, warning=FALSE, results='hide'}
+
+####################################
+#######  How to use ################
+####################################
+
+# 1) Install the packages and software specified below. (consider also updating all installed packages by chosing Update on the Packages tab)
+# 2) Define the variable names, change the default settings, if desired
+# 3) Hit Knit Word (or Knit HTML) in R Studio. (Output can take while due to bootstrapping the robust effect size and calculating the Bayesian Highest Density Interval)
+
+
+####################################
+######  FIRST TIME ONLY ############
+####################################
+
+#Remove # in front of the line below and run the code. Replace the # after installing the packages, otherwise the R markdown script will give errors.
+#install.packages(c("MASS", "akima", "robustbase", "cobs", "robust", "mgcv", "scatterplot3d", "quantreg", "rrcov", "lars", "pwr", "trimcluster", "mc2d", "psych", "Rfit","MBESS", "BayesFactor", "PoweR", "ggplot2", "reshape2", "plyr", "devtools", "rmarkdown","gmodels", "car", "gridExtra", "bootES", "BEST"))
+
+#The version of HLMdiag on CRAN gives an error - run the four lines of code below to install the latest version of HLMdiag. Install all required software.
+# install.packages("devtools")
+# install.packages("stringi")
+# library(devtools)
+#install_github("aloy/HLMdiag")
+
+#Installation of the robust statistics package: Remove # in front of each of 4 lines below and run the code. Replace the # after installing the packages, otherwise the R markdown script will give errors.
+
+#Download and install JAGS to calculate Bayesian HDI: http://sourceforge.net/projects/mcmc-jags/files/JAGS/
+#And Rtools for C++ compilation of Bayes models
+
+require(reshape2)
+require(pander) #for output
+require(pgirmess) #for KW test
+require(plyr) #for arrange
+require(ggplot2)
+require(HLMdiag)
+require(grid)
+require(gridExtra)
+require(gtable)
+require(gdata) #cbindX
+require(DescTools)
+require(FSA)
+require(PoweR)
+require(car) #levenne test
+#require(knitr)
+require(vegan) #for permanova
+
+#require(brms) #for bayes
+#require(shinystan)
+require(rjags); require(runjags)     
+require(WRS2) #robust
+
+inahurry <- F #if TRUE script skip slow Bayesian analysis. It also may help if script generates errors with Bayes packages installations (around 90% of script completion).
+
+###################################
+## Define variables names below ###
+###################################
+
+#Copy paste your data into a spreadsheet. Create 3 columns. On the first row, type the name of the variables. One column should contain the subject identifer (e.g., PPNR). The second column should contain the data from the dependent variable, and the third column should contain the grouping factor. Make sure there is no missing data (or emtpy cells underneath the data - check in .txt file).
+#Save your data as a .txt file - select Text (tab delimited)(*.txt).
+
+#my data grabber - change the directory and input filename up to you and try to run - no more changes are needed to succesfully run the script (if you already installed all the required packages)
+setwd(".")
+nn="example"
+ 
+
+
+#Make sure the data file and the R markdown file are in the same folder.
+#Define the name of the tab delimited txt file (or .csv file) that contains the data with at least 2 columns
+
+alldata <- data.frame(v1=NULL)
+tt <- data.frame(read.delim(paste(nn, '.txt' ,sep=""), header=T, na.strings = "", dec = ",", colClasses = numeric())) #data 
+alldata <- melt(tt,  measure.vars=colnames(tt),  variable.name="gr",  value.name=nn, na.rm=T)
+
+
+#IMPORTANT: Do not use spaces, hyphens, or other symbols in names. If variable names in your file include spaces, change the names.
+#Define name (header) of the grouping column in your data file (e.g., condition, time).
+factorlabel<-"gr" #needs to match the datafile (R is case-sensitive)!
+#Define name of the dependent measure column in your data file (e.g., reaction times, self-reported happiness)
+measurelabel<-nn #"deg"  #needs to match the datafile (R is case-sensitive)!
+#Below names for axis are used. These CAN include spaces.
+xlabelstring<-"group" #define variables to be used for axis (can be replaced by "Any Label")
+ylabelstring<- nn #"tentacle length, %"  #define variables to be used for axis
+
+#colnames(tt)<-c("PF", "OL", "DK", "ST","NV") #groups
+
+gn <- colnames(tt) #c("postflight", "overload", "dark", "ctrl","na.ve") #groups
+ln<- length(gn)
+
+#Set your alpha level and confidence interval
+alpha<-0.05
+ConfInt<-0.95
+
+options(scipen=10, digits = 5) #disable scientific notation for numbers smaller than x (i.e., 10) digits (e.g., 4.312e+22)
+
+#############################################################
+### Changed the information above? Then hit 'Knit Word' #####
+#############################################################
+#################### Know your way around R? ################ 
+############ Feel free to change the script below ###########
+#############################################################
+
+```
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE, message=FALSE, results='hide'}
+
+###ver 2 - from cookbook-r=from Baguely (independent, no diff, not pooled) - for t-distribution
+  # Confidence interval multiplier for standard error
+  # Calculate t-statistic for confidence interval: 
+  # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+ci<-vector()
+sem <- function(x) sqrt(var(x,na.rm=TRUE)/length(na.omit(x))) #SEM
+for (j in gn){
+  ciMult <- qt(ConfInt/2 + .5, length(alldata[alldata$gr==j,nn])-1)
+  ci <- append(ci,sem(alldata[alldata$gr==j,nn]) * ciMult)
+}
+
+###Descriptive statistic
+means <- aggregate(alldata[,nn]  ~  gr, alldata, mean)
+names(means)[1]<- "group"
+names(means)[2]<- "mean"
+means <-cbind(means, median = aggregate(alldata[,nn]  ~  gr, alldata, median)$"alldata[, nn]")
+means <-cbind(means, N = aggregate(alldata[,nn]  ~  gr, alldata, length)$"alldata[, nn]")
+nas <-vector()
+for (i in 1:length(gn)) {nas <- append(nas,length(tt[[i]])-length(na.omit(tt[[i]])))}
+means <-cbind(means, na = nas)
+means <-cbind(means, min =aggregate(alldata[,nn]  ~  gr, alldata, min)$"alldata[, nn]")
+means <-cbind(means, max = aggregate(alldata[,nn]  ~  gr, alldata, max)$"alldata[, nn]")
+means <-cbind(means, range=means$max-means$min)
+means <-cbind(means, sd = aggregate(alldata[,nn]  ~  gr, alldata, sd)$"alldata[, nn]")
+means <-cbind(means, sem = aggregate(alldata[,nn]  ~  gr, alldata, sem)$"alldata[, nn]")
+means <-cbind(means, Q25=aggregate(alldata[,nn]  ~  gr, alldata, function(x){round(quantile(x, .25), digits = 3)})$"alldata[, nn]")
+means <-cbind(means, Q75=aggregate(alldata[,nn]  ~  gr, alldata, function(x){round(quantile(x, .75), digits = 3)})$"alldata[, nn]")
+means <-cbind(means, IQR=means$Q75-means$Q25)
+means <-cbind(means, ci=ci)
+means <- cbind(means, lwr=means$mean-means$ci, upr=means$mean+means$ci)
+means <-cbind(means, skew = aggregate(alldata[,nn]  ~  gr, alldata, function(x){round(Skew(x, method = 2), digits = 3)})$"alldata[, nn]") #method 2 used in SPSS, SAS, SigmaStat
+means <-cbind(means, kurt = aggregate(alldata[,nn]  ~  gr, alldata, function(x){round(Kurt(x, method = 2), digits = 3)})$"alldata[, nn]")#method 2 used in SPSS, SAS, SigmaStat
+
+#Tukey outliers #Outlier(subset(alldata[nn], (alldata$gr=="control")))
+noutliers<-data.frame(group=gn[1],subset(alldata[nn], (alldata$gr==gn[1] & (alldata[nn]<=means$Q75[1]+1.5*means$IQR[1]) & (alldata[nn]>=means$Q25[1]-1.5*means$IQR[1])))) #alldata wo outliers
+ttnout<-data.frame(subset(alldata[nn], (alldata$gr==gn[1] & (alldata[nn]<=means$Q75[1]+1.5*means$IQR[1]) & (alldata[nn]>=means$Q25[1]-1.5*means$IQR[1])))) #tt wo outliers
+colnames(ttnout)[1]<-gn[1]
+
+for (i in 2:ln){
+noutliers<-rbind(noutliers, data.frame(group=gn[i],subset(alldata[nn], (alldata$gr==gn[i] & (alldata[nn]<=means$Q75[i]+1.5*means$IQR[i]) & (alldata[nn]>=means$Q25[i]-1.5*means$IQR[i])))))
+ttnout<-cbindX(ttnout, data.frame(subset(alldata[nn], (alldata$gr==gn[i] & (alldata[nn]<=means$Q75[i]+1.5*means$IQR[i]) & (alldata[nn]>=means$Q25[i]-1.5*means$IQR[i])))))
+colnames(ttnout)[i]<-gn[i]
+} #boxplot(noutliers[,nn]~group, data=noutliers)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE, message=FALSE, results='hide'}
+#Test normality 
+nor <- c(21,6,2,7)
+nr <- data.frame(check.names = F) #norm results
+for (j in gn){
+  for (i in nor) { 
+    if (!length(nr)) nr<-data.frame(statcompute(i, alldata[alldata$gr==j,nn], levels = c(0.05)), check.names = F, row.names = j)  
+    else  nr<-rbind(nr, data.frame(statcompute(i, alldata[alldata$gr==j,nn], levels = c(0.05)), row.names = j))
+    }#i   #c.f. nr$pvalue[0:4]
+  #add KS test (one-sample)
+  a<-rnorm(means$N[which.max(means[,1]==j)],mean=means$mean[which.max(means[,1]==j)], sd=means$sd[which.max(means[,1]==j)])
+  #a is simulated sample with normal distribution with the same N, mean and SD
+  kst<-data.frame(row.names=j,statistic=ks.test(alldata[alldata$gr==j,nn], a)$statistic, pvalue=ks.test(alldata[alldata$gr==j,nn], a)$p.value)
+    ifelse(kst[2]<0.05, kst<-cbind(kst,decision=1), kst<-cbind(kst,decision=0))
+    nr<-rbind(nr, cbind(kst,alter=NA,stat.pars=NA))
+ }#nor j 
+
+
+#Testing equality of variances (homoscedasticity)
+ft<-fligner.test(unlist(alldata[nn]) ~ gr,data=alldata)  #the variances are homogeneous if  p-value > 0.05, so
+bt<-bartlett.test(unlist(alldata[nn]) ~ gr,data=alldata) #we accept the null hypothesis H0 (variances homogeneity)
+hs<-ft$p.value  #homoscedasticity results #p.value #1
+hs <- append(hs,bt$p.value) #2
+pvalueLevene<-leveneTest(unlist(alldata[nn]) ~ gr,data=alldata)$"Pr(>F)"[1:1]
+hs<- append(hs,pvalueLevene) #3
+if (ln == 2) { #only for 2 groups
+  #ans<-ansari.test(unlist(subset(alldata, gr=="postflight")[nn]) , unlist(subset(alldata, gr=="overload")[nn]), conf.int = TRUE,  alternative = "two.sided") #4
+   ans<-ansari.test(unlist(alldata[nn]) ~ gr,data=alldata)  #4
+  hs<-append(hs, ans$p.value) #4
+#moo<-mood.test(unlist(subset(alldata, gr=="postflight")[nn]) , unlist(subset(alldata, gr=="overload")[nn]), conf.int = TRUE,  alternative = "two.sided") #4
+  moo<-mood.test(unlist(alldata[nn]) ~ gr,data=alldata)  #5
+  hs <- append(hs,moo$p.value) #5
+}#if
+if (pvalueLevene < 0.05){equalvar<-"the assumption that variances in all groups are equal is rejected."}
+if (pvalueLevene >= 0.05){equalvar<-"the assumption that variances in all groups are equal is not rejected."}
+
+```
+
+This document summarizes a comparison between **`r length(gn)`** independent groups, comparing **`r ylabelstring`** between the conditions: **`r gn`**. This script can help to facilitate the analysis of data, and the word-output might prevent copy-paste errors when transferring results to a manuscript.
+
+#Checking for outliers, normality, equality of variances.  
+
+```{r, echo=FALSE, warning=FALSE, fig.height=17, fig.width=17, results="asis", dpi=150}
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(1,2))) ##row, col
+cat("\n")
+###Boxplot, means in dark red
+p <-ggplot(alldata, aes(factor(eval(parse(text=paste(factorlabel)))), eval(parse(text=paste(measurelabel))))) +
+  geom_boxplot(outlier.shape = 1, outlier.size = 3.0, outlier.colour ="blue", outlier.stroke = 1)+
+  stat_summary(fun.y=mean, colour="darkred", geom="point", 
+               shape=18, size=6,show.legend = FALSE) + 
+  ylab(ylabelstring)  + xlab(NULL) + theme_bw(base_size=24) + #+ xlab(xlabelstring)
+  theme(panel.grid.major.x = element_blank())+
+  theme(plot.margin = unit(c(0.5,1,0.5,0.5), "cm"))+
+  #geom_text(label ="", aes(cex = 1.2, cex.axis=3, cex.lab = 2.2))+
+  scale_x_discrete(labels = paste(gn, "\n",rep("N=",length(means$N)),means$N, sep=""))
+print(p, vp = viewport(layout.pos.row = 1, layout.pos.col = 1))
+
+###Violin+data points, outliers is open dots
+p<-ggplot(alldata, aes(factor(eval(parse(text=paste(factorlabel)))), eval(parse(text=paste(measurelabel))))) +
+  geom_violin(scale = "area", draw_quantiles=T, fill = "grey90" )+ #aes(fill = factor(gr)))+
+  geom_boxplot(data=alldata, aes(group=as.character(eval(parse(text=paste(factorlabel))))),  width=0.01, outlier.shape = 1, outlier.size = 4.0, outlier.colour ="blue", outlier.stroke = 1.5, notch=F) +
+  #stat_summary(fun.y=mean, colour="darkred", geom="point", shape=18, size=6,show.legend = FALSE) + 
+  geom_point(data=alldata, size=5, alpha=0.25) +
+  ylab(NULL)  + xlab(NULL) +
+  theme_bw(base_size=24) +  theme(panel.grid.major.x = element_blank())+
+  theme(plot.margin = unit(c(0.5,0.5,0.5,1), "cm"))
+
+#Add mean+CI
+#p+geom_errorbar(data=means, width=0.3, aes(x=group, y=mean, ymin=lwr, ymax=upr),  size = 1.0)+ #independent, diff=F (real CI), pooled.error=FALSE
+  p<- p+geom_errorbar(data=means, width=0.25, aes(x=group, y=mean, ymin=mean-ci*sqrt(2)/2, ymax=ci*sqrt(2)/2+mean),  size = 1.2, colour="darkred")+ #diff=T (Difference-adjusted 95% CIs, pooled.error=FALSE) 
+    #geom_line() + 
+    geom_point(data=means, aes(x=group, y=mean), shape=21, size=8, fill="white")+
+    geom_point(data=means, aes(x=group, y=mean), shape=18, size=4, colour="darkred")
+print(p, vp = viewport(layout.pos.row = 1, layout.pos.col = 2))
+cat("\n")
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(1,1))) ##row, col
+#for final CI plot !!!
+  p<-ggplot(alldata, aes(gr, "")) +
+  geom_errorbar(data=means, width=0.25, aes(x=group, y=mean, ymin=mean-ci*sqrt(2)/2, ymax=ci*sqrt(2)/2+mean),  size = 1.2, colour="black")+ #diff=T (Difference-adjusted 95% CIs, pooled.error=FALSE) 
+    #geom_line() + 
+  geom_point(data=means, aes(x=group, y=mean), shape=21, size=8, fill="white", stroke = 2)+
+  theme_bw(base_size=32) +  theme(panel.grid.major.x = element_blank())
+cat("\n")
+print(p, vp = viewport(layout.pos.row = 1, layout.pos.col = 1))
+
+```
+
+Boxplots can be used to identify outliers (blue open circles). Boxplots give the mean  (red rhomboids), the median (thick line), and 25% of the data above and below the median (box). End of whiskers are the maximum and minimum value when excluding outliers. The violin plot on the right shows distributions of all data (grey dots), and means with CI errorbars (difference-adjusted 95% confidence interval, see [Baguely 2012](https://seriousstats.wordpress.com/2012/03/18/cis-for-anova/)).
+
+####Normality assumption
+
+Most frequently used statistical tests assume that scores in all groups are normally distributed. If the normality assumption is violated, the Type 1 error rate of the test is no longer controlled, and can substantially increase beyond the chosen significance level. Formally, a normality test based on the data is incorrect, and the normality assumption should be tested on additional (e.g., pilot) data. Nevertheless, a two-step procedure (testing the data for normality, and using alternatives if normality is violated, seems to work well (see [Rochon, Gondan, & Kieser, 2012](http://www.biomedcentral.com/1471-2288/12/81)).
+
+##Tests for normality
+
+Five tests for normality are reported below for all groups. [Yap and Sim (2011, p. 2153)](http://www.tandfonline.com/doi/pdf/10.1080/00949655.2010.520163) recommend: "If the distribution is symmetric with low kurtosis values (i.e. symmetric short-tailed distribution), then the D'Agostino-Pearson and Shapiro-Wilkes tests have good power. For symmetric distribution with high sample kurtosis (symmetric long-tailed), the researcher can use the JB, Shapiro-Wilkes, or Anderson-Darling test." The Kolmogorov-Smirnov (K-S) test is often used, but no longer recommended (it highly affected by outliers; K-S test implemented here in  two-sided configuration for alternative hypothesis H1, and the result of it changes every run as it uses pseudorandom normally distributed variable with the same sample size, mean and SD).
+
+The normality assumption was **rejected in `r sum(nr$decision)` times out of totally `r length(gn)*5` normality tests** for every groups/conditions.
+
+Table of *p*-values:
+```{r  echo=FALSE, results="asis"}
+cat("\n**Test Name**  | ")
+for (i in gn) cat(i, " | ") #groups as col.names
+cat("\n")
+for (i in seq(from=1, to=length(gn)+1)) cat("------------- | ") 
+cat("\n**Shapiro-Wilk**  | ")
+for (i in seq(from=1, to=length(gn)*5, by=5)) cat(nr$pvalue[i], " |  ") #Shapiro-Wilk
+cat("\n**D'Agostino-Pearson**  | ")
+for (i in seq(from=2, to=length(gn)*5, by=5)) cat(nr$pvalue[i], " |  ") #D'Agostino-Pearson
+cat("\n**Anderson-Darling**  | ")
+for (i in seq(from=3, to=length(gn)*5, by=5)) cat(nr$pvalue[i], " |  ") #Anderson-Darling
+cat("\n**Jarque-Berra**  | ")
+for (i in seq(from=4, to=length(gn)*5, by=5)) cat(nr$pvalue[i], " |  ") #Jarque-Berra
+cat("\n**Kolmogorov-Smirnov**  | ")
+for (i in seq(from=5, to=length(gn)*5, by=5)) cat(nr$pvalue[i], " |  ") #Kolmogorov-Smirnov
+
+```
+
+If a normality test rejects the assumptions that the data is normally distributed (with *p* < .05) non-parametric or robust statistics have to be used. In very large samples (when the test for normality has close to 100% power) tests for normality can result in significant results even when data is normally distributed, based on minor deviations from normality. In very small samples (e.g., n = 10), deviations from normality might not be detected, but this does not mean the data is normally distributed.  Always look at a plot of the data in addition to the test results.
+
+###Histogram, kernel density plot (black line) and normal distribution (red line) of difference scores
+
+The density (or proportion of the observations) is plotted on the y-axis. The grey bars are a histogram of the scores in the two groups. Judging whether data is normally distributed on the basis of a histogram depends too much on the number of bins (or bars) in the graph. A kernel density plot (a non-parametric technique for density estimation) provides an easier way to check the normality of the data by comparing the shape of the density plot (the black line) with a normal distribution (the red dotted line, based on the observed mean and standard deviation). For independent *t*-tests, the dependent variables in both conditions should be normally distributed.
+
+```{r, echo=FALSE, message=FALSE, fig.height=10, fig.width=8, dpi=150}
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(ceiling(length(gn)/2),2))) ##row, col
+
+for (i in (1:length(gn))) {
+x.alldata<-subset(alldata, alldata$gr==gn[i])
+x<-unlist(x.alldata[measurelabel])
+xlabel <- gn[i]
+
+#density plot with normal distribution (red) and kernel desity plot
+den<-ggplot(x.alldata, aes(x=eval(parse(text=paste(measurelabel)))))  + 
+  geom_histogram(colour="black", fill="grey", aes(y = ..density..)) +
+  stat_function(fun = dnorm, args = c(mean=mean(x), sd=sd(x)), size = 1, color = "red", lty=2) +
+  geom_density(fill=NA, colour="black", size = 1) +
+  xlab(measurelabel)  + ggtitle(xlabel)+ theme_bw(base_size=14) + 
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+print(den, vp = viewport(layout.pos.row = trunc((i-1)/2+1), layout.pos.col = 1+as.numeric(is.even(i))))
+}
+#grid.newpage
+```
+
+###Q-Q-plot
+
+In the Q-Q plots the points should fall on the line. Deviations from the line in the upper and lower quartiles indicates the tails of the distributions are thicker or thinner than in the normal distribution. An S-shaped curve with a dip in the middle indicates data is left-skewed (more values to the right of the distribution), while a bump in the middle indicates data is right-skewed (more values to the left of the distribution). For interpretation examples, see [here](http://emp.byui.edu/BrownD/Stats-intro/dscrptv/graphs/qq-plot_egs.htm).
+
+```{r, echo=FALSE, message=FALSE,  fig.height=12, fig.width=10, dpi=150}
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(ceiling(length(gn)/2),2))) ##row, col
+for (i in (1:length(gn))) {
+ x.alldata<-subset(alldata, alldata$gr==gn[i])
+ x<-unlist(x.alldata[measurelabel])
+ xlabel <- gn[i]
+
+#Q-Q plot
+ qq <- ggplot_qqnorm(x, line = "quantile") + ggtitle(xlabel) + theme_bw(base_size=14) + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+ print(qq, vp = viewport(layout.pos.row = trunc((i-1)/2+1), layout.pos.col = 1+as.numeric(is.even(i))))
+#cat(trunc((i-1)/2+1), 1+as.numeric(is.odd(i-1)))
+} #for
+#grid.newpage()
+
+```
+
+###Equal variances assumption
+
+In addition to the normality assumption, a second assumption used by many tests is that variances in both groups are equal. For two-samples *t-test* [Ruxton (2006)](http://beheco.oxfordjournals.org/content/17/4/688.full) explains: "If you want to compare the central tendency of 2 populations based on samples of unrelated data, then the unequal variance (or Welch's) *t*-test should always be used in preference to the Student's *t*-test or Mann-Whitney U test." This is preferable to the more traditional two-step approach of first testing equality of variances using Levene's test, and then deciding between Student's and Welch's *t*-test. The degrees of freedom for Welch's *t*-test is typically not a round number.
+
+##Tests for homogeneity of variances (homoscedasticity)
+There are many tests for equality of variances for any taste. The **Fligner-Killeen** (median) test is recommended for a **rank-based (nonparametric)** k-sample test for homogeneity of variances. The test has been determined in a simulation study as one of the many tests for homogeneity of variances which is most robust against departures from normality, see [Conover, Johnson & Johnson (1981)](A comparative study of tests for homogeneity of variances, with applications to the outer continental shelf bidding data. Technometrics 23, 351Ц361.). **Mood's**  two-sample test for a difference in scale parameters is  another rank-based test for a difference in scale parameters [William J. Conover (1971)](Practical nonparametric statistics. New York: John Wiley & Sons. Pages 234f). Another two-sample  test for a difference in scale parameters is **Ansari-Bradley** test. Both two-sample tests are implemented 'from the box' here, so please check up the H0 formulation and additional parameters. **Bartlett's** (K squared) test of the null that the variances in each of the groups (samples) are the same is used **for parametric tests** [Bartlett, M. S. (1937)](Properties of sufficiency and statistical tests. Proceedings of the Royal Society of London Series A 160, 268Ц282.). For all tests the variances are homogeneous if  p-value > 0.05, 
+we accept the null hypothesis H0 (variances homogeneity).
+
+```{r  echo=FALSE, warning=FALSE}
+z<-0
+for (i in (1:length(hs))) {if (hs[i]< 0.05) z<-z+1} #decision
+```
+
+The variances homogeneity assumption was **rejected in `r z` times out of `r length(hs)`  homoscedasticity tests** for all  `r length(gn)` groups/conditions. For example, Levene's test for equality of variances **(*p* `r ifelse(pvalueLevene>0.001," = ", " < ")` `r ifelse(pvalueLevene>0.001,round(pvalueLevene, digits=3), "0.001")`)** indicates that `r equalvar`
+
+Table of *p*-values:
+
+```{r  echo=FALSE, results="asis", message=FALSE}
+cat("\n**Test Name**  | ")
+cat("**Fligner-Killeen**  | **Bartlett's test**  | **Levene's test**  | ", sep=" ")
+if (length(gn)==2) {cat("**Ansari-Bradley test** | **Mood's test** | ")}
+cat("\n")
+a<-ifelse(length(gn)==2, a<-6, a<- 4)
+for (i in 1:a) cat("------------- | ") 
+cat("\nFor",length(gn),"groups:  | ", hs[1]," | ", hs[2]," | ",hs[3]," | ")
+if (length(gn)==2) cat(hs[4]," | ",hs[5]," | \n")
+
+```
+
+***
+#One-way analysis of multiple groups
+Analysis of variance is most used frequentists' method for comparing multiple independent groups. Usually must be done in protected variant: first test for H0 all groups are equal, and if it return significant *p* for rejecting H0 make all required *post hoc* pairwise tests (with adjustment for multiple comparisons) for revealing which group are different from other. ANOVA on means is standard tool but it assumes normality and homoscedasticity for all groups. If there are no reasons for assuming normality, non-parametric ANOVA on ranks must be used (Kruskal-Wallis test). Welch's variant of ANOVA help to relax about homoscedasticity. Another way to relax with assumptions is by using robust statistic, like ANOVA on trimmed means (see below). In this script ANOVA on means is implemented with Tukey's adjusted *post hoc* tests (as in *TukeyHSD* function) for all possible comparisons. For less strict adjustment procedure multiple comparison can be done against one of the group (control). ANOVA on ranks implemented here as Kruskal-Wallis test with Dunn's method for multiple comparisons with Benjamini-Hochberg (FDR) adjustment (as in *dunnTest* function). Wiliam King [(2016)](http://ww2.coastal.edu/kingw/statistics/R-tutorials/multcomp.html) advertises for using Fisher LSD (Least Significant Difference) test:"The LSD test uses unadjusted p-values, and therefore it makes no attempt to control familywise error rate. If you use it as a protected test (i.e., only after seeing a significant effect in the omnibus ANOVA), it's good for about three or four comparisons without inflating the error rate. Beyond that, the inflation grows rapidly with increasing numbers of comparisons, if you're concerned about such a thing. It is among the most powerful of post hoc tests, however, and hey! Type II errors are errors too!"
+
+
+
+```{r, warning=FALSE, echo=FALSE, results='hide', message=FALSE}
+ ###open files to write results
+#   write.table(alldata, file=paste("reshaped_",nn,".txt", sep = ""), append = F, quote = F, sep = " ",
+#              eol = "\n", na = "NA", dec = ",", row.names = F,
+#              col.names = F, qmethod = c("escape", "double"),
+#              fileEncoding = "")
+  write.table(ttnout, file=paste(nn,"_tukeyrobust.txt", sep = ""), append = F, quote = F, sep = "\t",
+             eol = "\n", na = "", dec = ",", row.names = F,
+             col.names = T, qmethod = c("escape", "double"),
+             fileEncoding = "")
+```
+
+\pagebreak
+
+
+```{r, warning=FALSE, echo=FALSE, results='asis', message=FALSE}
+#require(pander)
+panderOptions("round", 8)
+panderOptions("digits", 4)
+panderOptions("table.style", "rmarkdown")#rmarkdown 
+panderOptions("table.split.table", 120)#Inf)
+panderOptions("keep.line.breaks", T)
+panderOptions("table.alignment.default", "left")
+ cat("\n##Parametric omnibus one-way ANOVA on means:\n") 
+ pander(av <-  anova(lm(unlist(alldata[nn])~gr, alldata))) 
+ av <-  aov(lm(unlist(alldata[nn])~gr, alldata)) #print(av)
+ cat("\n###Tukey *post hoc* test for multiple comparisons of means with 95% family-wise confidence level:\n")
+ av<-TukeyHSD(av)$gr
+ av<-data.frame(av,sign.=(av[,4]<0.05))
+ pander(av)
+ cat("\n###Fisher LSD test w/o adjustment:\n") #Fisher LSD test
+ pander(with(alldata, pairwise.t.test(x=unlist(alldata[nn]), g=gr, p.adjust="none")))
+ cat("\n###Fisher LSD test with Benjamini-Hochberg (FDR) adjustment:\n") #Fisher LSD test
+ pander(with(alldata, pairwise.t.test(x=unlist(alldata[nn]), g=gr, p.adjust="BH")))
+ cat("\n##Non-parametric omnibus one-way ANOVA on ranks (Kruskal-Wallis test):\n") # show Kruskal Wallis result 
+ pander(kruskal.test(unlist(alldata[nn])~gr, alldata)) # Kruskal Wallis test
+ #pander(kruskalmc(unlist(alldata[nn])~gr, alldata, probs = 0.05)) # multiple-comparison test
+ cat("\n###Dunn's *post hoc* test with Benjamini-Hochberg (FDR) adjustment:") # show Kruskal Wallis result 
+ cat("\nDunn (1964) Kruskal-Wallis multiple comparison, p-values adjusted with the Benjamini-Hochberg method for all pairwise comparison:\n")
+ if (length(gn)>2) {av <- dunnTest(unlist(alldata[nn])~gr, alldata, method="bh")$res # should be one of УholmФ, УbonferroniФ, УsidakФ, УhsФ, УhochbergФ, УbhФ, УbyФ, УnoneФ   # See ?p.adjust for options
+  kmc<-kruskalmc(unlist(alldata[nn])~gr, alldata, probs = 0.05)$dif.com #Siegel and Castellan (1988),  cont="two-tailed"
+  kmc<-cbind(kmc,Comparison=rownames(kmc))
+  av$sign=av[4]<alpha
+  colnames(av$sign)<-"sign."
+  kmc<- cbind(arrange(av, desc(Comparison)),arrange(kmc, desc(Comparison))[1:length(kmc)-1])[, c(1,6,7,2,3,4,5)] # rearrange columns
+  names(kmc)[2]<-"crit.dif"
+  row.names(kmc)<-kmc[,1] #p.adjust(kmc[2:5,5], method="BH")
+} else cat("\n**skipped**\n")#if
+pander(kmc[0:-1])
+cat(paste0("\n\nPairwise KW tests against the first group only, **", gn[1], "**:"))
+kmc<- kmc[grep(pattern = gn[1], x = rownames(kmc)),]
+kmc[,6]<- p.adjust(kmc[,5], method="BH")
+kmc[,7]<- kmc[,6]<alpha
+pander(kmc[0:-1])
+```
+
+
+***
+
+##One-way PERMANOVA
+
+Permutational methods are modern techniques, which gives much better statistical power then parametrical tests, especially on small and sparse (lot of NA) multiple samples. It widely used in ecology, starting from pioneering work [Anderson 2001](A new method for non-parametric multivariate analysis of variance. Austral Ecology, 26: 32Ц46.). Permutational MANOVA can be used in different schemas; here it is implemented in simplest one factor design based on function *adonis {vegan}*. There is not realization of *post hoc* pairwise tests right now (vegan 2.3-3), and author of the package have no plans to do it in future, despite of demand from R community. In this script PERMANOVA calculated statistic for all groups altogether (pretty correct way), and then each of the group **pairwise against the first group (`r gn[1]`)** using additional call of the function. Seems it also correct way of using it, although I didn't find examples of such analysis done before (people think analysis of permutational residuals may be more correct or computationally efficient way). So, you use these results at your own risk. In the commercial PRIMER software, written by author of the method, pairwise computation arranged by *post hoc* t-tests, as may be guessed from t-statistic in PRIMER's results tables.
+
+```{r, warning=FALSE, echo=FALSE, results='asis', message=FALSE,  fig.height=10, fig.width=12, dpi=150}
+cat("\n##PERMANOVA with groups as factor:\n")
+panderOptions('table.split.table', 120)#Inf)
+panderOptions('table.style', 'rmarkdown')
+adon.results<-adonis(unlist(alldata[nn])~gr, data=alldata, method="euclidean",perm=9999) #permanova
+pander(adon.results$aov.tab, "Permutation: free. Number of permutations: 9999. Method: Euclidean")
+#summary(perm)
+p1=densityplot(permustats(adon.results))
+p2=qqmath(permustats(adon.results))
+cat("\n###Kernel density estimates of permuted values (left, observed value of the statistic marked by vertical line) and QQ-plot of permutations (right, observed value of the statistic marked by horizontal line):\n")
+do.call(grid.arrange, c(list(p1,p2), list(ncol = 2)))
+
+```
+
+
+Pairwise tests against the first group, **`r gn[1]`**:
+```{r, warning=F, echo=F, message=F, results='asis'}
+if (ln>2) {
+ptab <- list()
+ftab <- list()
+for (i in (2:length(gn))) {
+ adon.results<-adonis(value~group, data=melt(data.frame(tt[1],tt[i]), variable.name="group", value.name="value",  na.rm = T),
+                      method="euclidean",perm=9999) #permanova
+ #cat(paste("\nGroup **",gn[i],"** pairwise test against the 1st group:\n\n", sep=""))
+ #kable(adon.results$aov.tab[1:6], format = "markdown")
+ #print(adon.results$aov.tab[1:6]) #ugly but works
+ #pander(adon.results$aov.tab[1:6], "pairwise test against the 1st group") #bug? not knitted
+ ptab <-append(ptab,adon.results$aov.tab$"Pr(>F)"[1:1])
+ ftab <-append(ftab,adon.results$aov.tab$"F.Model"[1:1])
+}#for
+}#if (ln>2) {
+```
+
+```{r, warning=F, echo=F, message=F}
+#results='asis'
+
+if (ln>2) {
+  ptab <- list()
+ftab <- list()
+for (i in (2:length(gn))) {
+ adon.results<-adonis(value~group, data=melt(data.frame(tt[1],tt[i]), variable.name="group", value.name="value",  na.rm = T),
+                      method="euclidean",perm=9999) #permanova
+ cat(paste("\nGroup **",gn[i],"** pairwise test against the 1st group:\n\n", sep=""))
+ #pander(adon.results$aov.tab[1:6], style="rmarkdown", split.table=120) #bug? not knitted
+ #kable(adon.results$aov.tab[1:6], format = "markdown")
+ print(adon.results$aov.tab[1:6]) #ugly but works
+ ptab <-append(ptab,adon.results$aov.tab$"Pr(>F)"[1:1])
+ ftab <-append(ftab,adon.results$aov.tab$"F.Model"[1:1])
+}#for
+
+ptab <- rbind(unlist(ptab))
+ftab <- rbind(unlist(ftab))
+colnames(ptab)<-(gn[0:-1])
+ptab<-rbind(ptab[1,],p.adjust(ptab, method="BH")) #ptab=kmc[2:5,5]
+ptab<-rbind(ptab,ftab) #F
+  #ptab<-noquote(apply(ptab, 2, format.pval, digits = 3))
+row.names(ptab)<- c("Unadjusted","BH adjusted", "Pseudo-F")
+pander(ptab, "Table of *p*-values in pairwise tests against the 1st group.")
+} else cat("\nOnly two groups, look above.")
+```
+
+***
+
+##Bayesian analysis
+
+One more powerful analysis using randomization techniques, Bayesian MCMC model implemented here as in *JAGS*  package. In current configuration the script assuming gamma-distribution and different SD for each group. Summary of results:
+
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE,  fig.height=6, fig.width=4, dpi=150, results='hide'}
+# results='hide',
+#{r, warning=FALSE, echo=FALSE, message=FALSE,  fig.height=6, fig.width=4, dpi=150, results='hide'}
+if (inahurry) cat("\n**Choosen inahurry=TRUE, so it skipped!**") else { #do bayes 
+###Bayesian analysis - - script by Andrey Anikin
+colnames(alldata) <- c("group", "value")
+### model the HARD way
+# —м.  рушку, глава 16
+# alternatively, if we assume that each group's sd comes from some underlying distribution: (the conclusion remains much the same)
+model = "
+model {
+# likelihood
+for (s in 1:nTotal) { y[s] ~ dt (beta[cond[s]], 1/sigma[cond[s]]^2, 1) } #df=1 last value 
+
+# priors
+for (c in 1:nCond) {
+  #beta[c] ~ dnorm (meanTotal^2, 1/(5*sdTotal)^2) #In current configuration the script assuming t-distribution and different SD for each group.
+ beta[c] ~ dgamma ( meanTotal^2/(5*sdTotal)^2, meanTotal/(5*sdTotal)^2 ) #  gamma-distribution and different SD for each group
+  sigma[c] ~ dgamma ( muS^2/sigmaS^2, muS/sigmaS^2 )
+}
+
+muS ~ dgamma (sdTotal^2/sdTotal^2, sdTotal/sdTotal^2)
+sigmaS ~ dgamma (sdTotal^2/sdTotal^2, sdTotal/sdTotal^2)
+# dfMinusOne ~ dexp (1/29)   # we just assume df=1
+# df <- dfMinusOne + 1
+}
+" 
+
+# Load the data:
+dataList = list(
+  y = alldata$value,
+  cond = c(alldata$group),
+  nTotal = nrow(alldata),
+  nCond = length(unique(alldata$group)),
+  meanTotal = mean(alldata$value),
+  sdTotal = sd(alldata$value)
+)
+
+runJagsOut <- run.jags( method="parallel", model=model,  # если не работает, убери method="parallel"
+                        monitor=c("beta","sigma","df"), # какие параметры сохранить
+                        data=dataList, n.chains=4,  # inits=..., 
+                        adapt=500, burnin=500, sample=5000, thin=1,
+                        summarise=F, silent.jags = F)
+codaSamples = as.mcmc.list( runJagsOut )
+
+#plot (codaSamples)
+#summary (codaSamples)  # df = 7 - действительно, не вполне нормальное распределение. “акже см. сигмы: 15, 15, 8, 14, 12, 7 в первой модели (все 5 определ€ютс€ независимо) и примерно те же во второй модели (все 5 из одного hyperprior), из чего мы заключаем, что перва€ модель достаточна.
+
+coda0 = as.data.frame(as.matrix(codaSamples)) # save MCMC chains for posterior prediction
+colnames(coda0)[1:(ln*2)]<- c(gn, paste(colnames(coda0[(ln+1):(2*ln)]),gn))
+#summary(coda0)
+### Plotting. Note we take medians of posterior distribution and 2.5% & 97.5% quantiles as 95% CI. coda0 contains MCMC chains for the model 
+
+dfPlot = data.frame ('Group'=gn, #!!!actual slice of coda0 must be dependent on groups no. (and chains no?) for 5gr= coda0[,8:12] := length(gn)+3:length(gn)*2+2 But see coda totals definition ahead!
+                     Median = as.numeric(apply (coda0[,1:ln], 2, function(x)quantile(x, .5))), #, median), 
+                     lwr = as.numeric(apply (coda0[,1:ln], 2, function(x)quantile(x, .025))),
+                     upr = as.numeric(apply (coda0[,1:ln], 2, function(x)quantile(x, .975))))
+dfPlot$Group = factor(dfPlot$Group, levels=gn)
+} #else inahurry=T
+
+```
+
+```{r, warning=F, echo=F, message=F,   fig.height=12, fig.width=12, dpi=150}
+#results='asis',
+if (!inahurry) { #do bayes 
+#p<-pander_return(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
+#pander(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
+
+  #cat(p, sep="      \n\r")
+#print(paste(p, sep="      \n\r"))
+#cat('\nBayesian median and CI.95 values. 4 chains, 5000 iterations\n\n')
+#print(dfPlot)
+
+#violin + all data
+p1<-ggplot(data=alldata, aes(x=group, y=value)) +
+  geom_violin(scale = "area", draw_quantiles=T, fill = "grey90" )+ #aes(fill = factor(gr)))+
+  geom_boxplot(data=alldata, aes(x=group), width=0.01, outlier.shape = 1, outlier.size = 4.0, outlier.colour ="blue", outlier.stroke = 1.5, notch=F) + #need for colouring outliers
+  #stat_summary(fun.y=mean, colour="darkred", geom="point", shape=18, size=6,show.legend = FALSE) + 
+  geom_point(data=alldata, size=5, alpha=0.25) +
+  theme_bw(base_size=24) +  theme(panel.grid.major.x = element_blank())+
+  theme(plot.margin = unit(c(0.5,0.5,0.5,1), "cm"))+
+  #mean+-ci.95
+  geom_point(data=dfPlot, aes(x=Group, y=Median), 
+             alpha=.5,  col="darkred", size=8, show.legend=F) +
+  geom_errorbar(data=dfPlot, aes(x=Group, y=Median, ymin=lwr, ymax=upr),
+                 width=.25, col="darkred", size = 1.2,
+                 position=position_dodge(.7)) +
+  geom_point(shape=21, size=2, position=position_dodge(.7), show.legend=F) +
+  xlab('Bayesian median and CI.95 is in dark red') + ylab(nn) +
+  theme_bw() + theme(legend.position='top')
+
+p2 <-ggplot(data=dfPlot, aes(x=Group, y=Median))+
+  geom_point(data=dfPlot, aes(x=Group, y=Median), 
+             alpha=.5,  col="darkred", size=8, show.legend=F) +
+  geom_errorbar(data=dfPlot, aes(x=Group, y=Median, ymin=lwr, ymax=upr),
+                 width=.25, col="darkred", size = 1.2,
+                 position=position_dodge(.7)) +
+  geom_point(shape=21, size=2, position=position_dodge(.7), show.legend=F) +
+  xlab('Bayesian median and CI.95') + ylab(nn) +
+  theme_bw() + theme(legend.position='top')
+do.call(grid.arrange, c(list(p1,p2), list(ncol = 2)))
+
+#ggsave ('pix/entropy_violins.png', width=9, height=6, scale=1.7, units='cm', dpi=150)
+#pander(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
+for (i in 2:ln) {
+  if (i==2) {
+    first_group_higher <- coda0[[1]]>coda0[[i]]
+    first_group_lower <- coda0[[1]]<coda0[[i]]
+    } else {first_group_higher <-first_group_higher & coda0[[1]]>coda0[[i]]   
+            first_group_lower <-first_group_lower & coda0[[1]]<coda0[[i]]
+            }#else
+          } #for i
+} #if inahurry=T
+
+```
+
+```{r, warning=F, echo=F, message=F, results='asis'}
+pander(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
+cat("\nApproximate probability of first group to be higher: **",mean(first_group_higher),"** and lower: **", mean(first_group_lower), "** the other groups (1-*p*-value Bayesian analog).\n", sep="")
+#mean(first_group_higher) # веро€тность того, что перва€ группа выше всех остальных. 1-mean(first_group_higher)  - типа, типа, но не совсем, р-значение
+cat("Delta of first group **", gn[1], "** median in comparison with averaged medians of ", ln-1," other groups with 95 CI is:", sep="")
+pander(quantile(as.matrix(coda0[1] - rowMeans(coda0[2:5])), probs = c(.5, .025, .975)))
+
+```
+
+***
+
+##Robust statistics
+Values in the tails of the distribution can have a strong influence on the mean. If values in the tails differ from a normal distribution, the power of a test is reduced and the effect size estimates are biased, even under slight deviations from normality [Wilcox, R. R. (2012)](Introduction to robust estimation and hypothesis testing. Academic Press.). One way to deal with this problem is to remove the tails in the analysis by using *trimmed means*. A recommended percentage of trimming is 20% from both tails (Wilcox, 2012), which means inferences are based on the 60% of the data in the middle of the distribution. Useful for the data, where clear outliers are visible on boxplots above. 
+
+###Heteroscedastic one-way ANOVA for trimmed means.
+Implemented here on the base of *WRS2* package. The *t1way* function computes a one-way ANOVA for the medians. Homoscedasticity assumption
+not required. It uses a generalization of WelchТs method. Corresponding post hoc tests performed using *lincon*. Trimming is 20%.
+
+```{r, warning=F, echo=F, message=F}
+#WRS2
+print(t1way(value~group, data=alldata, tr=0.2))
+av<-lincon(value~group, data=alldata, tr=0.2)
+df<-as.data.frame(cbind(av$comp, sign=av$comp[,"p.value"]<alpha))
+df[,2]<-paste(gn[df[,1]], "vs.", gn[df[,2]])
+df$sign <- as.logical(df$sign)
+pander(df[0:-1])
+```
+
+```{r, warning=F, echo=F, message=F, results='asis', fig.height=12, fig.width=12, dpi=150}
+#tukeyrobust
+cat("\n\n\n###One-way ANOVA on means, dataset without outliers (Tukey's definition):\n") 
+ pander(av <-  anova(lm(unlist(noutliers[nn])~group, noutliers))) 
+ av <-  aov(lm(unlist(noutliers[nn])~group, noutliers)) #print(av)
+ cat("\n####Tukey *post hoc* test for multiple comparisons of means with 95% family-wise confidence level:\n")
+ av<-TukeyHSD(av)$group
+ av<-data.frame(av,sign.=(av[,4]<0.05))
+ pander(av)
+ cat("\nUsed dataset without outliers was saved to file **",nn,"_tukeyrobust.txt**\n", sep="")
+ cat("\nThe boxplot and the violin plot for dataset without outliers (new ones may appear):\n")
+ par(mfrow = c(1, 2))
+ boxplot(noutliers[,nn]~group, data=noutliers)
+ PlotViolin(noutliers[,nn]~group, data=noutliers, col=c("green","yellow", "orange", "red","magenta"))
+```
+
+***
+\pagebreak
+
+
+```{r, warning=FALSE, echo=FALSE, results='asis'}
+cat("#Descriptive statistic for **", nn, "**:", sep="")
+pander(means,  split.cells = c(rep(2,length(means$N)))) #pander(means)
+pander("\n***\n#Raw data:")
+pander(tt)
+pander("\n***\n#Session info:\n\n")
+pander(sessionInfo())
+```
+
+
+##References
+
+This script uses the *reshape2*, *plyr* and *gdata*  packages for arrange data, the *PoweR* package to perform the normality tests, *HLMdiag* to create the QQplots, *ggplot2* for all plots, *gtable* and *gridExtra* to combine multiple plots into one, *car* to perform Levene's test, *pander* for nicer table output, *pgirmess* for KW test, *FSA* for Dunn's test, *DescTools* for some exploratory statistics, *vegan* for PERMANOVA analysis, *rjags* and *runjags* for Bayesian analysis, *WRS2* for robust ANOVA on trimmed means.
+... may be more - check inside the code!
+
+*refs omitted - click it in text*
+
+The script based on various sources with modifications, including: 
+
+Lakens, D. (2015). The perfect *t*-test. Retrieved from
+https://github.com/Lakens/perfect-t-test. doi:10.5281/zenodo.17603
+
+Thom Baguley (2012). Independent measures (between-subjects) ANOVA and displaying confidence intervals for differences in means.
+https://seriousstats.wordpress.com/2012/03/18/cis-for-anova/
+
+Wiliam King (2016). R-tutorials. (last updated 2016 February 22)
+http://ww2.coastal.edu/kingw/statistics/R-tutorials/multcomp.html
+
+"Todos Logos" (2009). Analysis of variance: ANOVA, for multiple comparisons
+http://statistic-on-air.blogspot.com/2009/07/analysis-of-variance-anova-for-multiple.html
+
+McDonald, J.H. 2014. Handbook of Biological Statistics (3rd ed.). Sparky House Publishing, Baltimore, Maryland.
+http://www.biostathandbook.com/index.html
+
+Mangiafico, S.S. 2015. An R Companion for the Handbook of Biological Statistics, version 1.09. 
+http://rcompanion.org/rcompanion/ (Pdf version: rcompanion.org/documents/RCompanionBioStatistics.pdf)
+
+Adapted examples from 
+R package help
+R cookbook http://www.cookbook-r.com
+StackOverflow http://stackoverflow.com
+blogposts aggregated at http://www.r-bloggers.com/
