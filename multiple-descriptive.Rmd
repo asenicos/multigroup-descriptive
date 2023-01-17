@@ -4,7 +4,12 @@ author: "Automatic report by R-script /asenic"
 output: word_document
 ---
 
+
 ```{r, echo=FALSE, include=FALSE, cache = FALSE, warning=FALSE, results='hide'}
+
+### This is 2023 implementation of the code adapted for R 4.2.2, as the previous 1.00 version of code do not works in current R version. There are minor imperfections with knitting design, too lazy to investigate it. The rJAGs library for Bayesian analysis was changed and do not working with this code, so do not set inahurry=F because it will cause error.
+
+
 
 ####################################
 #######  How to use ################
@@ -12,7 +17,7 @@ output: word_document
 
 # 1) Install the packages and software specified below. (consider also updating all installed packages by chosing Update on the Packages tab)
 # 2) Define the variable names, change the default settings, if desired
-# 3) Hit Knit Word (or Knit HTML) in R Studio. (Output can take while due to bootstrapping the robust effect size and calculating the Bayesian Highest Density Interval)
+# 3) Hit Knit Word (or Knit HTML)! (Output can take while due to bootstrapping the robust effect size and calculating the Bayesian Highest Density Interval)
 
 
 ####################################
@@ -38,14 +43,14 @@ require(pander) #for output
 require(pgirmess) #for KW test
 require(plyr) #for arrange
 require(ggplot2)
-require(HLMdiag)
+require(HLMdiag) #for ggplot_qqnorm / qqplot
 require(grid)
 require(gridExtra)
 require(gtable)
 require(gdata) #cbindX
 require(DescTools)
 require(FSA)
-require(PoweR)
+require(PoweR) #for stat_compute #maybe require manual installation for R 4.2.2
 require(car) #levenne test
 #require(knitr)
 require(vegan) #for permanova
@@ -55,7 +60,7 @@ require(vegan) #for permanova
 require(rjags); require(runjags)     
 require(WRS2) #robust
 
-inahurry <- F #if TRUE script skip slow Bayesian analysis. It also may help if script generates errors with Bayes packages installations (around 90% of script completion).
+inahurry <- T #if TRUE script skip slow Bayesian analysis. It also may help if script generates errors with Bayes packages installations (around 90% of script completion).
 
 ###################################
 ## Define variables names below ###
@@ -64,14 +69,12 @@ inahurry <- F #if TRUE script skip slow Bayesian analysis. It also may help if s
 #Copy paste your data into a spreadsheet. Create 3 columns. On the first row, type the name of the variables. One column should contain the subject identifer (e.g., PPNR). The second column should contain the data from the dependent variable, and the third column should contain the grouping factor. Make sure there is no missing data (or emtpy cells underneath the data - check in .txt file).
 #Save your data as a .txt file - select Text (tab delimited)(*.txt).
 
-#my data grabber - change the directory and input filename up to you and try to run - no more changes are needed to succesfully run the script (if you already installed all the required packages)
+#my data grabber
 setwd(".")
 nn="example"
- 
-
 
 #Make sure the data file and the R markdown file are in the same folder.
-#Define the name of the tab delimited txt file (or .csv file) that contains the data with at least 2 columns
+#Define the name of the tab delimited txt file (or .csv file) that contains the data with at least 2 columns: an independent (grouping) variable and a dependent variable. Specify the decimal symbol below (e.g., your text file stores numbers either as 3.14 or 3,14)
 
 alldata <- data.frame(v1=NULL)
 tt <- data.frame(read.delim(paste(nn, '.txt' ,sep=""), header=T, na.strings = "", dec = ",", colClasses = numeric())) #data 
@@ -169,7 +172,7 @@ for (j in gn){
   #a is simulated sample with normal distribution with the same N, mean and SD
   kst<-data.frame(row.names=j,statistic=ks.test(alldata[alldata$gr==j,nn], a)$statistic, pvalue=ks.test(alldata[alldata$gr==j,nn], a)$p.value)
     ifelse(kst[2]<0.05, kst<-cbind(kst,decision=1), kst<-cbind(kst,decision=0))
-    nr<-rbind(nr, cbind(kst,alter=NA,stat.pars=NA))
+    nr<-rbind(nr, cbind(kst,alter=NA,stat.pars=NA, symbol=NA))
  }#nor j 
 
 
@@ -314,11 +317,15 @@ for (i in (1:length(gn))) {
  x<-unlist(x.alldata[measurelabel])
  xlabel <- gn[i]
 
-#Q-Q plot
- qq <- ggplot_qqnorm(x, line = "quantile") + ggtitle(xlabel) + theme_bw(base_size=14) + 
+#Q-Q plot #deprecated
+ # qq <- ggplot_qqnorm(x, line = "quantile") + ggtitle(xlabel) + theme_bw(base_size=14) + 
+ #  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+ # print(qq, vp = viewport(layout.pos.row = trunc((i-1)/2+1), layout.pos.col = 1+as.numeric(is.even(i))))
+#cat(trunc((i-1)/2+1), 1+as.numeric(is.odd(i-1)))
+ #Q-Q plot new
+ qq <- qplot(sample = x, data = x.alldata) + ggtitle(xlabel) + theme_bw(base_size=14) +
   theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())
  print(qq, vp = viewport(layout.pos.row = trunc((i-1)/2+1), layout.pos.col = 1+as.numeric(is.even(i))))
-#cat(trunc((i-1)/2+1), 1+as.numeric(is.odd(i-1)))
 } #for
 #grid.newpage()
 
@@ -329,7 +336,7 @@ for (i in (1:length(gn))) {
 In addition to the normality assumption, a second assumption used by many tests is that variances in both groups are equal. For two-samples *t-test* [Ruxton (2006)](http://beheco.oxfordjournals.org/content/17/4/688.full) explains: "If you want to compare the central tendency of 2 populations based on samples of unrelated data, then the unequal variance (or Welch's) *t*-test should always be used in preference to the Student's *t*-test or Mann-Whitney U test." This is preferable to the more traditional two-step approach of first testing equality of variances using Levene's test, and then deciding between Student's and Welch's *t*-test. The degrees of freedom for Welch's *t*-test is typically not a round number.
 
 ##Tests for homogeneity of variances (homoscedasticity)
-There are many tests for equality of variances for any taste. The **Fligner-Killeen** (median) test is recommended for a **rank-based (nonparametric)** k-sample test for homogeneity of variances. The test has been determined in a simulation study as one of the many tests for homogeneity of variances which is most robust against departures from normality, see [Conover, Johnson & Johnson (1981)](A comparative study of tests for homogeneity of variances, with applications to the outer continental shelf bidding data. Technometrics 23, 351Ц361.). **Mood's**  two-sample test for a difference in scale parameters is  another rank-based test for a difference in scale parameters [William J. Conover (1971)](Practical nonparametric statistics. New York: John Wiley & Sons. Pages 234f). Another two-sample  test for a difference in scale parameters is **Ansari-Bradley** test. Both two-sample tests are implemented 'from the box' here, so please check up the H0 formulation and additional parameters. **Bartlett's** (K squared) test of the null that the variances in each of the groups (samples) are the same is used **for parametric tests** [Bartlett, M. S. (1937)](Properties of sufficiency and statistical tests. Proceedings of the Royal Society of London Series A 160, 268Ц282.). For all tests the variances are homogeneous if  p-value > 0.05, 
+There are many tests for equality of variances for any taste. The **Fligner-Killeen** (median) test is recommended for a **rank-based (nonparametric)** k-sample test for homogeneity of variances. The test has been determined in a simulation study as one of the many tests for homogeneity of variances which is most robust against departures from normality, see [Conover, Johnson & Johnson (1981)](A comparative study of tests for homogeneity of variances, with applications to the outer continental shelf bidding data. Technometrics 23, 351?361.). **Mood's**  two-sample test for a difference in scale parameters is  another rank-based test for a difference in scale parameters [William J. Conover (1971)](Practical nonparametric statistics. New York: John Wiley & Sons. Pages 234f). Another two-sample  test for a difference in scale parameters is **Ansari-Bradley** test. Both two-sample tests are implemented 'from the box' here, so please check up the H0 formulation and additional parameters. **Bartlett's** (K squared) test of the null that the variances in each of the groups (samples) are the same is used **for parametric tests** [Bartlett, M. S. (1937)](Properties of sufficiency and statistical tests. Proceedings of the Royal Society of London Series A 160, 268?282.). For all tests the variances are homogeneous if  p-value > 0.05, 
 we accept the null hypothesis H0 (variances homogeneity).
 
 ```{r  echo=FALSE, warning=FALSE}
@@ -365,7 +372,7 @@ Analysis of variance is most used frequentists' method for comparing multiple in
 #              eol = "\n", na = "NA", dec = ",", row.names = F,
 #              col.names = F, qmethod = c("escape", "double"),
 #              fileEncoding = "")
-  write.table(ttnout, file=paste(nn,"_tukeyrobust.txt", sep = ""), append = F, quote = F, sep = "\t",
+write.table(ttnout, file=paste(nn,"_tukeyrobust.txt", sep = ""), append = F, quote = F, sep = "\t",
              eol = "\n", na = "", dec = ",", row.names = F,
              col.names = T, qmethod = c("escape", "double"),
              fileEncoding = "")
@@ -398,7 +405,7 @@ panderOptions("table.alignment.default", "left")
  #pander(kruskalmc(unlist(alldata[nn])~gr, alldata, probs = 0.05)) # multiple-comparison test
  cat("\n###Dunn's *post hoc* test with Benjamini-Hochberg (FDR) adjustment:") # show Kruskal Wallis result 
  cat("\nDunn (1964) Kruskal-Wallis multiple comparison, p-values adjusted with the Benjamini-Hochberg method for all pairwise comparison:\n")
- if (length(gn)>2) {av <- dunnTest(unlist(alldata[nn])~gr, alldata, method="bh")$res # should be one of УholmФ, УbonferroniФ, УsidakФ, УhsФ, УhochbergФ, УbhФ, УbyФ, УnoneФ   # See ?p.adjust for options
+ if (length(gn)>2) {av <- dunnTest(unlist(alldata[nn])~gr, alldata, method="bh")$res # should be one of ?holm?, ?bonferroni?, ?sidak?, ?hs?, ?hochberg?, ?bh?, ?by?, ?none?   # See ?p.adjust for options
   kmc<-kruskalmc(unlist(alldata[nn])~gr, alldata, probs = 0.05)$dif.com #Siegel and Castellan (1988),  cont="two-tailed"
   kmc<-cbind(kmc,Comparison=rownames(kmc))
   av$sign=av[4]<alpha
@@ -420,14 +427,14 @@ pander(kmc[0:-1])
 
 ##One-way PERMANOVA
 
-Permutational methods are modern techniques, which gives much better statistical power then parametrical tests, especially on small and sparse (lot of NA) multiple samples. It widely used in ecology, starting from pioneering work [Anderson 2001](A new method for non-parametric multivariate analysis of variance. Austral Ecology, 26: 32Ц46.). Permutational MANOVA can be used in different schemas; here it is implemented in simplest one factor design based on function *adonis {vegan}*. There is not realization of *post hoc* pairwise tests right now (vegan 2.3-3), and author of the package have no plans to do it in future, despite of demand from R community. In this script PERMANOVA calculated statistic for all groups altogether (pretty correct way), and then each of the group **pairwise against the first group (`r gn[1]`)** using additional call of the function. Seems it also correct way of using it, although I didn't find examples of such analysis done before (people think analysis of permutational residuals may be more correct or computationally efficient way). So, you use these results at your own risk. In the commercial PRIMER software, written by author of the method, pairwise computation arranged by *post hoc* t-tests, as may be guessed from t-statistic in PRIMER's results tables.
+Permutational methods are modern techniques, which gives much better statistical power then parametrical tests, especially on small and sparse (lot of NA) multiple samples. It widely used in ecology, starting from pioneering work [Anderson 2001](A new method for non-parametric multivariate analysis of variance. Austral Ecology, 26: 32?46.). Permutational MANOVA can be used in different schemas; here it is implemented in simplest one factor design based on function *adonis {vegan}*. There is not realization of *post hoc* pairwise tests right now (vegan 2.3-3), and author of the package have no plans to do it in future, despite of demand from R community. In this script PERMANOVA calculated statistic for all groups altogether (pretty correct way), and then each of the group **pairwise against the first group (`r gn[1]`)** using additional call of the function. Seems it also correct way of using it, although I didn't find examples of such analysis done before (people think analysis of permutational residuals may be more correct or computationally efficient way). So, you use these results at your own risk. In the commercial PRIMER software, written by author of the method, pairwise computation arranged by *post hoc* t-tests, as may be guessed from t-statistic in PRIMER's results tables.
 
 ```{r, warning=FALSE, echo=FALSE, results='asis', message=FALSE,  fig.height=10, fig.width=12, dpi=150}
 cat("\n##PERMANOVA with groups as factor:\n")
 panderOptions('table.split.table', 120)#Inf)
 panderOptions('table.style', 'rmarkdown')
-adon.results<-adonis(unlist(alldata[nn])~gr, data=alldata, method="euclidean",perm=9999) #permanova
-pander(adon.results$aov.tab, "Permutation: free. Number of permutations: 9999. Method: Euclidean")
+adon.results<-adonis2(unlist(alldata[nn])~gr, data=alldata, method="euclidean",perm=9999) #permanova
+pander(adon.results, "Permutation: free. Number of permutations: 9999. Method: Euclidean")
 #summary(perm)
 p1=densityplot(permustats(adon.results))
 p2=qqmath(permustats(adon.results))
@@ -497,7 +504,7 @@ if (inahurry) cat("\n**Choosen inahurry=TRUE, so it skipped!**") else { #do baye
 ###Bayesian analysis - - script by Andrey Anikin
 colnames(alldata) <- c("group", "value")
 ### model the HARD way
-# —м.  рушку, глава 16
+# ??. ??????, ????? 16
 # alternatively, if we assume that each group's sd comes from some underlying distribution: (the conclusion remains much the same)
 model = "
 model {
@@ -528,15 +535,15 @@ dataList = list(
   sdTotal = sd(alldata$value)
 )
 
-runJagsOut <- run.jags( method="parallel", model=model,  # если не работает, убери method="parallel"
-                        monitor=c("beta","sigma","df"), # какие параметры сохранить
+runJagsOut <- run.jags( method="parallel", model=model,  # ???? ?? ????????, ????? method="parallel"
+                        monitor=c("beta","sigma","df"), # ????? ????????? ?????????
                         data=dataList, n.chains=4,  # inits=..., 
                         adapt=500, burnin=500, sample=5000, thin=1,
                         summarise=F, silent.jags = F)
 codaSamples = as.mcmc.list( runJagsOut )
 
 #plot (codaSamples)
-#summary (codaSamples)  # df = 7 - действительно, не вполне нормальное распределение. “акже см. сигмы: 15, 15, 8, 14, 12, 7 в первой модели (все 5 определ€ютс€ независимо) и примерно те же во второй модели (все 5 из одного hyperprior), из чего мы заключаем, что перва€ модель достаточна.
+#summary (codaSamples)  # df = 7 - ?????????????, ?? ?????? ?????????? ?????????????. ????? ??. ?????: 15, 15, 8, 14, 12, 7 ? ?????? ?????? (??? 5 ???????????? ??????????) ? ???????? ?? ?? ?? ?????? ?????? (??? 5 ?? ?????? hyperprior), ?? ???? ?? ?????????, ??? ?????? ?????? ??????????.
 
 coda0 = as.data.frame(as.matrix(codaSamples)) # save MCMC chains for posterior prediction
 colnames(coda0)[1:(ln*2)]<- c(gn, paste(colnames(coda0[(ln+1):(2*ln)]),gn))
@@ -554,6 +561,7 @@ dfPlot$Group = factor(dfPlot$Group, levels=gn)
 
 ```{r, warning=F, echo=F, message=F,   fig.height=12, fig.width=12, dpi=150}
 #results='asis',
+inahurry=T #R 4.2.2 debug
 if (!inahurry) { #do bayes 
 #p<-pander_return(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
 #pander(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
@@ -607,11 +615,12 @@ for (i in 2:ln) {
 ```
 
 ```{r, warning=F, echo=F, message=F, results='asis'}
-pander(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
-cat("\nApproximate probability of first group to be higher: **",mean(first_group_higher),"** and lower: **", mean(first_group_lower), "** the other groups (1-*p*-value Bayesian analog).\n", sep="")
-#mean(first_group_higher) # веро€тность того, что перва€ группа выше всех остальных. 1-mean(first_group_higher)  - типа, типа, но не совсем, р-значение
-cat("Delta of first group **", gn[1], "** median in comparison with averaged medians of ", ln-1," other groups with 95 CI is:", sep="")
-pander(quantile(as.matrix(coda0[1] - rowMeans(coda0[2:5])), probs = c(.5, .025, .975)))
+inahurry=T #R 4.2.2 debug
+# pander(dfPlot,'Bayesian median and CI.95 values. 4 chains, 5000 iterations',  style="rmarkdown")
+# cat("\nApproximate probability of first group to be higher: **",mean(first_group_higher),"** and lower: **", mean(first_group_lower), "** the other groups (1-*p*-value Bayesian analog).\n", sep="")
+# #mean(first_group_higher) # ??????????? ????, ??? ?????? ?????? ???? ???? ?????????. 1-mean(first_group_higher)  - ????, ????, ?? ?? ??????, ?-????????
+# cat("Delta of first group **", gn[1], "** median in comparison with averaged medians of ", ln-1," other groups with 95 CI is:", sep="")
+# pander(quantile(as.matrix(coda0[1] - rowMeans(coda0[2:5])), probs = c(.5, .025, .975)))
 
 ```
 
@@ -622,12 +631,13 @@ Values in the tails of the distribution can have a strong influence on the mean.
 
 ###Heteroscedastic one-way ANOVA for trimmed means.
 Implemented here on the base of *WRS2* package. The *t1way* function computes a one-way ANOVA for the medians. Homoscedasticity assumption
-not required. It uses a generalization of WelchТs method. Corresponding post hoc tests performed using *lincon*. Trimming is 20%.
+not required. It uses a generalization of Welch?s method. Corresponding post hoc tests performed using *lincon*. Trimming is 20%.
 
 ```{r, warning=F, echo=F, message=F}
 #WRS2
-print(t1way(value~group, data=alldata, tr=0.2))
-av<-lincon(value~group, data=alldata, tr=0.2)
+colnames(alldata)<-c('gr','value')#debug r 4.2.2
+print(t1way(value~gr, data=alldata, tr=0.2))
+av<-lincon(value~gr, data=alldata, tr=0.2)
 df<-as.data.frame(cbind(av$comp, sign=av$comp[,"p.value"]<alpha))
 df[,2]<-paste(gn[df[,1]], "vs.", gn[df[,2]])
 df$sign <- as.logical(df$sign)
